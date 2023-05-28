@@ -18,7 +18,7 @@ struct Todo {
     author_id: i32,
 }
 
-let row = connection.query_row("SELECT todo_id, text, author_id FROM todos", Todo::try_from_row).unwrap();
+let row = connection.query_row("SELECT todo_id, text, author_id FROM todos", [], Todo::try_from_row).unwrap();
 ```
 
 Each field need's to implement `rusqlite::types::FromSql`, as this will be used to convert a
@@ -42,7 +42,7 @@ struct User {
     username: String
 }
 
-let row = client.query_one("SELECT todo_id, text, user_id, username FROM todos t, users u WHERE t.author_id = u.user_id", &[], Todo::try_from_row).unwrap();
+let row = client.query_one("SELECT todo_id, text, user_id, username FROM todos t, users u WHERE t.author_id = u.user_id", [], Todo::try_from_row).unwrap();
 ```
 
 If a the struct contains a field with a name that differs from the name of the sql column, you can use the `#[from_row(rename = "..")]` attribute. 
