@@ -1,0 +1,36 @@
+[package]
+name = "rusqlite-from-row"
+description = "Derivable trait that allows converting a rusqlite row to a struct"
+documentation = "https://docs.rs/rusqlite-from-row"
+readme = "README.md"
+version.workspace = true
+authors.workspace = true 
+edition.workspace = true
+repository.workspace = true 
+homepage.workspace = true 
+license-file.workspace = true
+keywords.workspace = true
+categories.workspace = true 
+
+[lib]
+doctest = false
+
+[workspace]
+members = ["rusqlite-from-row-derive"]
+
+[workspace.package]
+version = "0.1.0"
+authors = ["Remo Pas <remo.pas22@gmail.com>"]
+edition = "2021"
+repository = "https://github.com/remkop22/rusqlite-from-row"
+homepage = "https://github.com/remkop22/rusqlite-from-row"
+license-file = "LICENSE"
+keywords = ["rusqlite", "sqlite", "from-row", "mapper"]
+categories = ["database", "parsing", "data-structures"]
+
+[workspace.dependencies]
+rusqlite-from-row-derive = { path = "rusqlite-from-row-derive", version = "=0.1.0" }
+
+[dependencies]
+rusqlite-from-row-derive.workspace = true
+rusqlite = "0.29.0"

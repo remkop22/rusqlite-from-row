@@ -1,0 +1,20 @@
+[package]
+name = "rusqlite-from-row-derive"
+description = "Internal proc-macro crate for rusqlite-from-row"
+version.workspace = true
+authors.workspace = true 
+edition.workspace = true
+repository.workspace = true 
+homepage.workspace = true 
+license-file.workspace = true
+keywords.workspace = true
+categories.workspace = true 
+
+[lib]
+proc-macro = true
+
+[dependencies]
+quote = "1.0.28"
+syn = "2.0.17"
+darling = "0.20.1"
+proc-macro2 = "1.0.59"
