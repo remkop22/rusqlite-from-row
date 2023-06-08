@@ -7,7 +7,10 @@ Derive `FromRow` to generate a mapping between a struct and rusqlite rows.
 rusqlite_from_row = "0.1.0"
 ```
 
-## Examples
+## Usage
+
+Derive `FromRow` and execute a query that selects columns with the same names and types.
+
 ```rust
 use rusqlite_from_row::FromRow;
 
@@ -21,9 +24,10 @@ struct Todo {
 let row = connection.query_row("SELECT todo_id, text, author_id FROM todos", [], Todo::try_from_row).unwrap();
 ```
 
-Each field need's to implement `rusqlite::types::FromSql`, as this will be used to convert a
-single column to the specified type. If you want to override this behavior and delegate it to a
-nested structure that also implements `FromRow`, use `#[from_row(flatten)]`:
+## Nesting, Joins and Flattening
+
+You might want to represent a join between two tables as nested structs. This is possible using the `#[from_row(flatten)]` on the nested field.
+This will delegate the creation of that field to `FromRow::from_row` with the same row, instead of to `FromSql`. 
 
 Because many tables have naming collisions when joining them, you can specify a `prefix = ".."` to retrieve the columns uniquely. This prefix should match the prefix you specify when renaming the column in a select, like `select <column> as <prefix>_<column>`.
 
@@ -45,20 +49,30 @@ struct User {
     name: String
 }
 
+// Rename all `User` fields to have `user_` prefix.
 let row = client.query_one("SELECT t.id, t.name, t.text, u.name as user_name, u.id as user_id FROM todos t JOIN user u ON t.author_id = u.user_id", [], Todo::try_from_row).unwrap();
 ```
 
-If a the struct contains a field with a name that differs from the name of the sql column, you can use the `#[from_row(rename = "..")]` attribute. 
+## Renaming and Converting
 
-When a field in your struct has a type `T` that doesn't implement `FromSql` or `FromRow` but 
-it does impement `T: From<C>` or `T: TryFrom<c>`, and `C` does implment `FromSql` or `FromRow` 
-you can use `#[from_row(from = "C")]` or `#[from_row(try_from = "C")]`. This will use type `C` to extract it from the row and 
-then finally converts it into `T`. 
+If a struct contains a field with a name that differs from the name of the sql column, you can use the `#[from_row(rename = "..")]` attribute. 
+
+Normally if you have a custom wrapper type like `struct DbId(i32)`, you'd need to implement `FromSql` in order to use it in a query. A simple alternative is to implement `From<i32>` or `TryFrom<i32>` for `DbId` and annotating a field with `#[from_row(from = "i32")]` or `#[from_row(try_from = "i32")]`.
+
+This will delegate the sql conversion to `<i32 as FromSql>` and subsequently convert it to `DbId`.
 
 ```rust
+struct DbId(i32);
+
+impl From<i32> for DbId {
+    fn from(value: i32) -> Self {
+        Self(value)
+    }
+}
+
 struct Todo {
     // If the sqlite column is named `todo_id`.
-    #[from_row(rename = "todo_id")]
+    #[from_row(rename = "todo_id", from = "i32")]
     id: i32,
     // If the sqlite column is `TEXT`, it will be decoded to `String`,
     // using `FromSql` and then converted to `Vec<u8>` using `std::convert::From`.
@@ -66,3 +80,5 @@ struct Todo {
     todo: Vec<u8>
 }
 ```
+
+
