@@ -24,7 +24,7 @@ struct Todo {
 let row = connection.query_row("SELECT todo_id, text, author_id FROM todos", [], Todo::try_from_row).unwrap();
 ```
 
-## Nesting, Joins and Flattening
+### Nesting, Joins and Flattening
 
 You might want to represent a join between two tables as nested structs. This is possible using the `#[from_row(flatten)]` on the nested field.
 This will delegate the creation of that field to `FromRow::from_row` with the same row, instead of to `FromSql`. 
@@ -53,7 +53,7 @@ struct User {
 let row = client.query_one("SELECT t.id, t.name, t.text, u.name as user_name, u.id as user_id FROM todos t JOIN user u ON t.author_id = u.user_id", [], Todo::try_from_row).unwrap();
 ```
 
-## Renaming and Converting
+### Renaming and Converting
 
 If a struct contains a field with a name that differs from the name of the sql column, you can use the `#[from_row(rename = "..")]` attribute. 
 
