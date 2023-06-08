@@ -4,7 +4,7 @@ Derive `FromRow` to generate a mapping between a struct and rusqlite rows.
 
 ```toml
 [dependencies]
-rusqlite_from_row= "0.1.0"
+rusqlite_from_row = "0.1.0"
 ```
 
 ## Examples
@@ -14,7 +14,7 @@ use rusqlite_from_row::FromRow;
 #[derive(FromRow)]
 struct Todo {
     todo_id: i32,
-    text: String
+    text: String,
     author_id: i32,
 }
 
@@ -25,24 +25,27 @@ Each field need's to implement `rusqlite::types::FromSql`, as this will be used 
 single column to the specified type. If you want to override this behavior and delegate it to a
 nested structure that also implements `FromRow`, use `#[from_row(flatten)]`:
 
+Because many tables have naming collisions when joining them, you can specify a `prefix = ".."` to retrieve the columns uniquely. This prefix should match the prefix you specify when renaming the column in a select, like `select <column> as <prefix>_<column>`.
+
 ```rust
 use rusqlite_from_row::FromRow;
 
 #[derive(FromRow)]
 struct Todo {
-    todo_id: i32,
+    id: i32,
+    name: String,
     text: String,
-    #[from_row(flatten)]
+    #[from_row(flatten, prefix = "user_")]
     author: User
 }
 
 #[derive(FromRow)]
 struct User {
-    user_id: i32,
-    username: String
+    id: i32,
+    name: String
 }
 
-let row = client.query_one("SELECT todo_id, text, user_id, username FROM todos t, users u WHERE t.author_id = u.user_id", [], Todo::try_from_row).unwrap();
+let row = client.query_one("SELECT t.id, t.name, t.text, u.name as user_name, u.id as user_id FROM todos t JOIN user u ON t.author_id = u.user_id", [], Todo::try_from_row).unwrap();
 ```
 
 If a the struct contains a field with a name that differs from the name of the sql column, you can use the `#[from_row(rename = "..")]` attribute. 
@@ -53,7 +56,6 @@ you can use `#[from_row(from = "C")]` or `#[from_row(try_from = "C")]`. This wil
 then finally converts it into `T`. 
 
 ```rust
-
 struct Todo {
     // If the sqlite column is named `todo_id`.
     #[from_row(rename = "todo_id")]
@@ -63,5 +65,4 @@ struct Todo {
     #[from_row(from = "String")]
     todo: Vec<u8>
 }
-
 ```
