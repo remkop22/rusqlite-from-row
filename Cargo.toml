@@ -29,7 +29,7 @@ keywords = ["rusqlite", "sqlite", "from-row", "mapper"]
 categories = ["database", "parsing", "data-structures"]
 
 [workspace.dependencies]
-rusqlite-from-row-derive = { path = "rusqlite-from-row-derive", version = "=0.1.0" }
+rusqlite-from-row-derive = { path = "rusqlite-from-row-derive", version = "=0.2.0" }
 
 [dependencies]
 rusqlite-from-row-derive.workspace = true
