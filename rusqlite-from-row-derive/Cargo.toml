@@ -14,7 +14,7 @@ categories.workspace = true
 proc-macro = true
 
 [dependencies]
-quote = "1.0.28"
-syn = "2.0.17"
-darling = "0.20.1"
-proc-macro2 = "1.0.59"
+quote = "1.0.32"
+syn = "2.0.28"
+darling = "0.20.3"
+proc-macro2 = "1.0.66"
