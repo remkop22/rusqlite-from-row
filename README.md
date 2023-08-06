@@ -4,7 +4,7 @@ Derive `FromRow` to generate a mapping between a struct and rusqlite rows.
 
 ```toml
 [dependencies]
-rusqlite_from_row = "0.1.0"
+rusqlite_from_row = "0.2.0"
 ```
 
 ## Usage
@@ -29,7 +29,9 @@ let row = connection.query_row("SELECT todo_id, text, author_id FROM todos", [],
 You might want to represent a join between two tables as nested structs. This is possible using the `#[from_row(flatten)]` on the nested field.
 This will delegate the creation of that field to `FromRow::from_row` with the same row, instead of to `FromSql`. 
 
-Because many tables have naming collisions when joining them, you can specify a `prefix = ".."` to retrieve the columns uniquely. This prefix should match the prefix you specify when renaming the column in a select, like `select <column> as <prefix>_<column>`.
+Because tables might have naming collisions when joining them, you can specify a `prefix = ".."` to retrieve the columns uniquely. This prefix should match the prefix you specify when renaming the column in a select, like `select <column> as <prefix><column>`. Nested prefixing is supported.
+
+Outer joins can be supported by wrapping the flattened type in an `Option`. The `FromRow` implementation of `Option` will still require all columns to present, but will produce a `None` if all the columns are an SQL `null` value.
 
 ```rust
 use rusqlite_from_row::FromRow;
