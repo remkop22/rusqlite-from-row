@@ -72,10 +72,10 @@ impl DeriveFromRow {
         let original_predicates = where_clause.clone().map(|w| &w.predicates).into_iter();
         let predicates = self.predicates()?;
 
-        let from_row_fields = self
+        let is_all_null_fields = self
             .fields()
             .iter()
-            .map(|f| f.generate_from_row())
+            .map(|f| f.generate_is_all_null())
             .collect::<syn::Result<Vec<_>>>()?;
 
         let try_from_row_fields = self
@@ -86,17 +86,20 @@ impl DeriveFromRow {
 
         Ok(quote! {
             impl #impl_generics rusqlite_from_row::FromRow for #ident #ty_generics where #(#original_predicates),* #(#predicates),* {
-
-                fn from_row_prefixed(row: &rusqlite_from_row::rusqlite::Row, prefix: &str) -> Self {
-                    Self {
-                        #(#from_row_fields),*
-                    }
-                }
-
-                fn try_from_row_prefixed(row: &rusqlite_from_row::rusqlite::Row, prefix: &str) -> std::result::Result<Self, rusqlite_from_row::rusqlite::Error> {
+                fn try_from_row_prefixed(
+                    row: &rusqlite_from_row::rusqlite::Row, 
+                    prefix: Option<&str>
+                ) -> std::result::Result<Self, rusqlite_from_row::rusqlite::Error> {
                     Ok(Self {
                         #(#try_from_row_fields),*
                     })
+                }
+
+                fn is_all_null(
+                    row: &rusqlite_from_row::rusqlite::Row, 
+                    prefix: Option<&str>
+                ) -> std::result::Result<bool, rusqlite_from_row::rusqlite::Error> {
+                    Ok(#(#is_all_null_fields)&&*)
                 }
             }
         }
@@ -201,28 +204,28 @@ impl FromRowField {
         Ok(())
     }
 
-    /// Generate the line needed to retrieve this field from a row when calling `from_row`.
-    fn generate_from_row(&self) -> Result<TokenStream2> {
-        let ident = self.ident.as_ref().unwrap();
+    fn generate_is_all_null(&self) -> Result<TokenStream2> {
         let column_name = self.column_name();
-        let field_ty = &self.ty;
         let target_ty = self.target_ty()?;
 
-        let mut base = if self.flatten {
-            let prefix = self.prefix.clone().unwrap_or_default();
+        let line = if self.flatten {
+            let prefix = if let Some(prefix) = &self.prefix {
+                quote!(Some(&(prefix.unwrap_or("").to_string() + #prefix)))
+            }else {
+                quote!(prefix)
+            };
 
-            quote!(<#target_ty as rusqlite_from_row::FromRow>::from_row_prefixed(row, #prefix))
-        } else {
-            quote!(rusqlite_from_row::rusqlite::Row::get_unwrap::<&str, #target_ty>(row, &format!("{}{}", prefix, #column_name)))
+            quote!(<#target_ty as rusqlite_from_row::FromRow>::is_all_null(row, #prefix)?)
+        }else {
+            quote!{
+                rusqlite_from_row::rusqlite::Row::get_ref::<&str>(
+                    row, 
+                    &(prefix.unwrap_or("").to_string() + #column_name)
+                )? == rusqlite_from_row::rusqlite::types::ValueRef::Null
+            }
         };
 
-        if self.from.is_some() {
-            base = quote!(<#field_ty as std::convert::From<#target_ty>>::from(#base));
-        } else if self.try_from.is_some() {
-            base = quote!(<#field_ty as std::convert::TryFrom<#target_ty>>::try_from(#base).expect("could not convert column"));
-        };
-
-        Ok(quote!(#ident: #base))
+        Ok(line)
     }
 
     /// Generate the line needed to retrieve this field from a row when calling `try_from_row`.
@@ -233,11 +236,15 @@ impl FromRowField {
         let target_ty = self.target_ty()?;
 
         let mut base = if self.flatten {
-            let prefix = self.prefix.clone().unwrap_or_default();
+            let prefix = if let Some(prefix) = &self.prefix {
+                quote!(Some(&(prefix.unwrap_or("").to_string() + #prefix)))
+            }else {
+                quote!(prefix)
+            };
 
             quote!(<#target_ty as rusqlite_from_row::FromRow>::try_from_row_prefixed(row, #prefix)?)
         } else {
-            quote!(rusqlite_from_row::rusqlite::Row::get::<&str, #target_ty>(row, &format!("{}{}", prefix, #column_name))?)
+            quote!(rusqlite_from_row::rusqlite::Row::get::<&str, #target_ty>(row, &(prefix.unwrap_or("").to_string() + #column_name))?)
         };
 
         if self.from.is_some() {
