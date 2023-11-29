@@ -33,4 +33,4 @@ rusqlite-from-row-derive = { path = "rusqlite-from-row-derive", version = "=0.2.
 
 [dependencies]
 rusqlite-from-row-derive.workspace = true
-rusqlite = "0.29.0"
+rusqlite = "0.30.0"
