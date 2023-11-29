@@ -4,7 +4,7 @@ Derive `FromRow` to generate a mapping between a struct and rusqlite rows.
 
 ```toml
 [dependencies]
-rusqlite_from_row = "0.2.0"
+rusqlite_from_row = "0.2.1"
 ```
 
 ## Usage
