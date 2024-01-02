@@ -19,7 +19,7 @@ doctest = false
 members = ["rusqlite-from-row-derive"]
 
 [workspace.package]
-version = "0.2.1"
+version = "0.2.2"
 authors = ["Remo Pas <remo.pas22@gmail.com>"]
 edition = "2021"
 repository = "https://github.com/remkop22/rusqlite-from-row"
@@ -29,8 +29,8 @@ keywords = ["rusqlite", "sqlite", "from-row", "mapper"]
 categories = ["database", "parsing", "data-structures"]
 
 [workspace.dependencies]
-rusqlite-from-row-derive = { path = "rusqlite-from-row-derive", version = "=0.2.1" }
+rusqlite-from-row-derive = { path = "rusqlite-from-row-derive", version = "=0.2.2" }
 
 [dependencies]
 rusqlite-from-row-derive.workspace = true
-rusqlite = "0.30.0"
+rusqlite = ">=0.27,<=0.30"
