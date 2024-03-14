@@ -4,8 +4,8 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
-    meta::ParseNestedMeta, parse_macro_input, parse_str, spanned::Spanned, Attribute, Data,
-    DataStruct, DeriveInput, Error, Field, Fields, LitStr, Result, Type,
+    parse_macro_input, parse_str, spanned::Spanned, Attribute, Data, DataStruct, DeriveInput,
+    Error, ExprPath, Field, Fields, LitStr, Result, Type,
 };
 
 /// Calls the fallible entry point and writes any errors to the tokenstream.
@@ -82,7 +82,7 @@ impl DeriveFromRow {
         let original_predicates = where_clause.map(|w| &w.predicates).into_iter();
         let predicates = self.predicates();
 
-        let is_all_null_fields = self.data.iter().map(|f| f.generate_is_all_null());
+        let is_all_null_fields = self.data.iter().filter_map(|f| f.generate_is_all_null());
 
         let try_from_row_fields = self.data.iter().map(|f| f.generate_try_from_row());
 
@@ -119,9 +119,7 @@ struct FromRowField {
 
 impl FromRowField {
     pub fn parse(field: Field) -> Result<Self> {
-        let mut attrs = FromRowAttrs::default();
-
-        attrs.parse(field.attrs)?;
+        let attrs = FromRowAttrs::parse(field.attrs)?;
 
         Ok(Self {
             ident: field.ident.expect("should be named"),
@@ -132,24 +130,29 @@ impl FromRowField {
 
     /// Returns a tokenstream of the type that should be returned from either
     /// `FromRow` (when using `flatten`) or `FromSql`.
-    fn target_ty(&self) -> &Type {
-        if let Some(from) = &self.attrs.from {
-            from
-        } else if let Some(try_from) = &self.attrs.try_from {
-            try_from
-        } else {
-            &self.ty
+    fn target_ty(&self) -> Option<&Type> {
+        match &self.attrs {
+            FromRowAttrs::Field {
+                convert: Some(Convert::From(ty) | Convert::TryFrom(ty)),
+                ..
+            } => Some(ty),
+            FromRowAttrs::Field {
+                convert: Some(Convert::FromFn(_)),
+                ..
+            } => None,
+            _ => Some(&self.ty),
         }
     }
 
     /// Returns the name that maps to the actuall sql column
     /// By default this is the same as the rust field name but can be overwritten by `#[from_row(rename = "..")]`.
     fn column_name(&self) -> Cow<str> {
-        self.attrs
-            .rename
-            .as_ref()
-            .map(Cow::from)
-            .unwrap_or_else(|| self.ident.to_string().into())
+        match &self.attrs {
+            FromRowAttrs::Field {
+                rename: Some(name), ..
+            } => name.as_str().into(),
+            _ => self.ident.to_string().into(),
+        }
     }
 
     /// Pushes the needed where clause predicates for this field.
@@ -160,52 +163,85 @@ impl FromRowField {
     /// `T: std::convert::From<R>`, where `T` is the type specified in the struct and `R` is the
     /// type specified in the `[try]_from` attribute.
     fn add_predicates(&self, predicates: &mut Vec<TokenStream2>) {
-        let target_ty = self.target_ty();
-        let ty = &self.ty;
+        match &self.attrs {
+            FromRowAttrs::Field {
+                default, convert, ..
+            } => {
+                let target_ty = self.target_ty();
+                let ty = &self.ty;
 
-        predicates.push(if self.attrs.flatten {
-            quote! (#target_ty: rusqlite_from_row::FromRow)
-        } else {
-            quote! (#target_ty: rusqlite_from_row::rusqlite::types::FromSql)
-        });
+                if let Some(target_ty) = target_ty {
+                    predicates
+                        .push(quote! (#target_ty: rusqlite_from_row::rusqlite::types::FromSql));
 
-        if self.attrs.from.is_some() {
-            predicates.push(quote!(#ty: std::convert::From<#target_ty>))
-        } else if self.attrs.try_from.is_some() {
-            let try_from = quote!(std::convert::TryFrom<#target_ty>);
+                    if *default {
+                        predicates.push(quote! (#target_ty: ::std::default::Default));
+                    }
+                }
 
-            predicates.push(quote!(#ty: #try_from));
-            predicates.push(quote!(rusqlite_from_row::rusqlite::Error: std::convert::From<<#ty as #try_from>::Error>));
-            predicates.push(quote!(<#ty as #try_from>::Error: std::fmt::Debug));
+                match convert {
+                    Some(Convert::From(target_ty)) => {
+                        predicates.push(quote!(#target_ty: std::convert::From<#target_ty>))
+                    }
+                    Some(Convert::TryFrom(target_ty)) => {
+                        let try_from = quote!(std::convert::TryFrom<#target_ty>);
+
+                        predicates.push(quote!(#ty: #try_from));
+                        predicates.push(quote!(rusqlite_from_row::rusqlite::Error: std::convert::From<<#ty as #try_from>::Error>));
+                        predicates.push(quote!(<#ty as #try_from>::Error: std::fmt::Debug));
+                    }
+                    _ => {}
+                }
+            }
+            FromRowAttrs::Flatten { default, .. } => {
+                let ty = &self.ty;
+
+                predicates.push(quote! (#ty: rusqlite_from_row::FromRow));
+
+                if *default {
+                    predicates.push(quote! (#ty: ::std::default::Default));
+                }
+            }
+            FromRowAttrs::Skip => {
+                let ty = &self.ty;
+
+                predicates.push(quote! (#ty: ::std::default::Default));
+            }
         }
     }
 
-    fn generate_is_all_null(&self) -> TokenStream2 {
-        let target_ty = self.target_ty();
+    fn generate_is_all_null(&self) -> Option<TokenStream2> {
+        let is_all_null = match &self.attrs {
+            FromRowAttrs::Flatten { prefix, .. } => {
+                let ty = &self.ty;
 
-        if self.attrs.flatten {
-            let prefix = match &self.attrs.prefix {
-                Some(Prefix::Value(prefix)) => {
-                    quote!(Some(&(prefix.unwrap_or("").to_string() + #prefix)))
-                }
-                Some(Prefix::Field) => {
-                    let ident_str = format!("{}_", self.ident);
-                    quote!(Some(&(prefix.unwrap_or("").to_string() + #ident_str)))
-                }
-                None => quote!(prefix),
-            };
+                let prefix = match &prefix {
+                    Some(Prefix::Value(prefix)) => {
+                        quote!(Some(&(prefix.unwrap_or("").to_string() + #prefix)))
+                    }
+                    Some(Prefix::Field) => {
+                        let ident_str = format!("{}_", self.ident);
+                        quote!(Some(&(prefix.unwrap_or("").to_string() + #ident_str)))
+                    }
+                    None => quote!(prefix),
+                };
 
-            quote!(<#target_ty as rusqlite_from_row::FromRow>::is_all_null(row, #prefix)?)
-        } else {
-            let column_name = self.column_name();
-
-            quote! {
-                rusqlite_from_row::rusqlite::Row::get_ref::<&str>(
-                    row,
-                    &(prefix.unwrap_or("").to_string() + #column_name)
-                )? == rusqlite_from_row::rusqlite::types::ValueRef::Null
+                quote!(<#ty as rusqlite_from_row::FromRow>::is_all_null(row, #prefix)?)
             }
-        }
+            FromRowAttrs::Field { .. } => {
+                let column_name = self.column_name();
+
+                quote! {
+                    rusqlite_from_row::rusqlite::Row::get_ref::<&str>(
+                        row,
+                        &(prefix.unwrap_or("").to_string() + #column_name)
+                    )? == rusqlite_from_row::rusqlite::types::ValueRef::Null
+                }
+            }
+            FromRowAttrs::Skip => return None,
+        };
+
+        Some(is_all_null)
     }
 
     /// Generate the line needed to retrieve this field from a row when calling `try_from_row`.
@@ -213,52 +249,96 @@ impl FromRowField {
         let ident = &self.ident;
         let column_name = self.column_name();
         let field_ty = &self.ty;
-        let target_ty = self.target_ty();
 
-        let mut base = if self.attrs.flatten {
-            let prefix = match &self.attrs.prefix {
-                Some(Prefix::Value(prefix)) => {
-                    quote!(Some(&(prefix.unwrap_or("").to_string() + #prefix)))
+        let base = match &self.attrs {
+            FromRowAttrs::Flatten { prefix, default } => {
+                let ty = &self.ty;
+
+                let prefix = match &prefix {
+                    Some(Prefix::Value(prefix)) => {
+                        quote!(Some(&(prefix.unwrap_or("").to_string() + #prefix)))
+                    }
+                    Some(Prefix::Field) => {
+                        let ident_str = format!("{}_", self.ident);
+                        quote!(Some(&(prefix.unwrap_or("").to_string() + #ident_str)))
+                    }
+                    None => quote!(prefix),
+                };
+
+                if *default {
+                    let value = quote!(<std::option::Option<#ty> as rusqlite_from_row::FromRow>::try_from_row_prefixed(row, #prefix)?);
+
+                    quote! {
+                        match #value {
+                            Some(value) => value,
+                            None => <#ty as ::std::default::Default>::default(),
+                        }
+                    }
+                } else {
+                    quote!(<#ty as rusqlite_from_row::FromRow>::try_from_row_prefixed(row, #prefix)?)
                 }
-                Some(Prefix::Field) => {
-                    let ident_str = format!("{}_", self.ident);
-                    quote!(Some(&(prefix.unwrap_or("").to_string() + #ident_str)))
+            }
+            FromRowAttrs::Field {
+                convert, default, ..
+            } => {
+                let column_name = quote!(&(prefix.unwrap_or("").to_string() + #column_name));
+                let target_ty = self
+                    .target_ty()
+                    .cloned()
+                    .unwrap_or_else(|| parse_str("_").unwrap());
+
+                let base = if *default {
+                    quote! {
+                        match rusqlite_from_row::rusqlite::Row::get_ref::<&str>(row, #column_name)? {
+                            ::rusqlite::types::ValueRef::Null => <#target_ty as ::std::default::Default>::default(),
+                            value => <#target_ty as ::rusqlite::types::FromSql>::column_result(value)?,
+                        }
+                    }
+                } else {
+                    quote!(rusqlite_from_row::rusqlite::Row::get::<&str, #target_ty>(row, #column_name)?)
+                };
+
+                match convert {
+                    Some(Convert::From(_)) => {
+                        quote!(<#field_ty as std::convert::From<#target_ty>>::from(#base))
+                    }
+                    Some(Convert::TryFrom(_)) => {
+                        quote!(<#field_ty as std::convert::TryFrom<#target_ty>>::try_from(#base)?)
+                    }
+                    Some(Convert::FromFn(func)) => {
+                        quote!(#func(#base))
+                    }
+                    _ => base,
                 }
-                None => quote!(prefix),
-            };
+            }
+            FromRowAttrs::Skip => {
+                let ty = &self.ty;
 
-            quote!(<#target_ty as rusqlite_from_row::FromRow>::try_from_row_prefixed(row, #prefix)?)
-        } else {
-            quote!(rusqlite_from_row::rusqlite::Row::get::<&str, #target_ty>(row, &(prefix.unwrap_or("").to_string() + #column_name))?)
-        };
-
-        if self.attrs.from.is_some() {
-            base = quote!(<#field_ty as std::convert::From<#target_ty>>::from(#base));
-        } else if self.attrs.try_from.is_some() {
-            base = quote!(<#field_ty as std::convert::TryFrom<#target_ty>>::try_from(#base)?);
+                quote!(<#ty as std::default::Default>::default())
+            }
         };
 
         quote!(#ident: #base)
     }
 }
 
-#[derive(Default)]
-struct FromRowAttrs {
-    /// Wether to flatten this field. Flattening means calling the `FromRow` implementation
-    /// of `self.ty` instead of extracting it directly from the row.
-    flatten: bool,
-    /// Can only be used in combination with flatten. Will prefix all fields of the nested struct
-    /// with this string. Can be useful for joins with overlapping names.
-    prefix: Option<Prefix>,
-    /// Optionaly use this type as the target for `FromRow` or `FromSql`, and then
-    /// call `TryFrom::try_from` to convert it the `self.ty`.
-    try_from: Option<Type>,
-    /// Optionaly use this type as the target for `FromRow` or `FromSql`, and then
-    /// call `From::from` to convert it the `self.ty`.
-    from: Option<Type>,
-    /// Override the name of the actual sql column instead of using `self.ident`.
-    /// Is not compatible with `flatten` since no column is needed there.
-    rename: Option<String>,
+enum FromRowAttrs {
+    Flatten {
+        prefix: Option<Prefix>,
+        default: bool,
+    },
+    Field {
+        rename: Option<String>,
+        convert: Option<Convert>,
+        default: bool,
+    },
+    Skip,
+}
+
+enum Convert {
+    From(Type),
+    TryFrom(Type),
+    FromFn(ExprPath),
 }
 
 enum Prefix {
@@ -267,40 +347,116 @@ enum Prefix {
 }
 
 impl FromRowAttrs {
-    fn parse(&mut self, attrs: Vec<Attribute>) -> Result<()> {
+    fn parse(attrs: Vec<Attribute>) -> Result<FromRowAttrs> {
+        let Some(span) = attrs.first().map(|attr| attr.span()) else {
+            return Ok(Self::Field {
+                rename: None,
+                convert: None,
+                default: false,
+            });
+        };
+
+        let mut flatten = false;
+        let mut prefix = None;
+        let mut try_from = None;
+        let mut from = None;
+        let mut from_fn = None;
+        let mut rename = None;
+        let mut skip = false;
+        let mut default = false;
+
         for attr in attrs {
             if !attr.meta.path().is_ident("from_row") {
                 continue;
             }
 
-            attr.parse_nested_meta(|meta| self.parse_one(meta))?;
+            attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("flatten") {
+                    flatten = true;
+                } else if meta.path.is_ident("prefix") {
+                    let prefix_value = if let Ok(value) = meta.value() {
+                        Prefix::Value(value.parse::<LitStr>()?.value())
+                    } else {
+                        Prefix::Field
+                    };
+
+                    prefix = Some(prefix_value);
+                } else if meta.path.is_ident("try_from") {
+                    let try_from_str: LitStr = meta.value()?.parse()?;
+                    try_from = Some(parse_str(&try_from_str.value())?);
+                } else if meta.path.is_ident("from") {
+                    let from_str: LitStr = meta.value()?.parse()?;
+                    from = Some(parse_str(&from_str.value())?);
+                } else if meta.path.is_ident("from_fn") {
+                    let from_fn_str: LitStr = meta.value()?.parse()?;
+                    from_fn = Some(parse_str(&from_fn_str.value())?);
+                } else if meta.path.is_ident("rename") {
+                    let rename_str: LitStr = meta.value()?.parse()?;
+                    rename = Some(rename_str.value());
+                } else if meta.path.is_ident("skip") {
+                    skip = true;
+                } else if meta.path.is_ident("default") {
+                    default = true;
+                }
+
+                Ok(())
+            })?;
         }
 
-        Ok(())
-    }
+        let attrs = if skip {
+            let other_attrs = flatten
+                || default
+                || prefix.is_some()
+                || try_from.is_some()
+                || from_fn.is_some()
+                || from.is_some()
+                || rename.is_some();
 
-    fn parse_one(&mut self, meta: ParseNestedMeta) -> Result<()> {
-        if meta.path.is_ident("flatten") {
-            self.flatten = true;
-        } else if meta.path.is_ident("prefix") {
-            let prefix = if let Ok(value) = meta.value() {
-                Prefix::Value(value.parse::<LitStr>()?.value())
-            } else {
-                Prefix::Field
+            if other_attrs {
+                return Err(Error::new(
+                    span,
+                    "can't combine `skip` with other attributes",
+                ));
+            }
+
+            Self::Skip
+        } else if flatten {
+            if rename.is_some() || from.is_some() || try_from.is_some() || from_fn.is_some() {
+                return Err(Error::new(
+                    span,
+                    "can't combine `skip` with other attributes",
+                ));
+            }
+
+            Self::Flatten { default, prefix }
+        } else {
+            if prefix.is_some() {
+                return Err(Error::new(
+                    span,
+                    "`prefix` attribute is only valid in combination with `flatten`",
+                ));
+            }
+
+            let convert = match (try_from, from, from_fn) {
+                (Some(try_from), None, None) => Some(Convert::TryFrom(try_from)),
+                (None, Some(from), None) => Some(Convert::From(from)),
+                (None, None, Some(from_fn)) => Some(Convert::FromFn(from_fn)),
+                (None, None, None) => None,
+                _ => {
+                    return Err(Error::new(
+                        span,
+                        "can't combine `try_from`, `from` or `from_fn`",
+                    ))
+                }
             };
 
-            self.prefix = Some(prefix);
-        } else if meta.path.is_ident("try_from") {
-            let try_from: LitStr = meta.value()?.parse()?;
-            self.try_from = Some(parse_str(&try_from.value())?);
-        } else if meta.path.is_ident("from") {
-            let from: LitStr = meta.value()?.parse()?;
-            self.from = Some(parse_str(&from.value())?);
-        } else if meta.path.is_ident("rename") {
-            let rename: LitStr = meta.value()?.parse()?;
-            self.rename = Some(rename.value());
-        }
+            Self::Field {
+                rename,
+                convert,
+                default,
+            }
+        };
 
-        Ok(())
+        Ok(attrs)
     }
 }

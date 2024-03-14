@@ -1,8 +1,9 @@
+use std::{ffi::OsStr, marker::PhantomData, path::PathBuf};
+
 use rusqlite::{params, Connection};
 use rusqlite_from_row::FromRow;
 
 #[derive(Debug, FromRow)]
-#[allow(dead_code)]
 pub struct Todo {
     id: i32,
     text: String,
@@ -10,6 +11,19 @@ pub struct Todo {
     author: User,
     #[from_row(flatten, prefix)]
     editor: User,
+    #[from_row(flatten, default)]
+    status: Status,
+    #[from_row(default)]
+    views: i32,
+    #[from_row(from_fn = "<PathBuf as From<String>>::from")]
+    file: PathBuf,
+    #[from_row(skip)]
+    empty: PhantomData<()>,
+}
+
+#[derive(Debug, FromRow, PartialEq, Eq, Default)]
+pub struct Status {
+    is_done: bool,
 }
 
 #[derive(Debug, FromRow)]
@@ -46,11 +60,19 @@ fn from_row() {
                 role_id INTEGER NULL REFERENCES role(id)
             );
 
+            CREATE TABLE status (
+                id INTEGER PRIMARY KEY,
+                is_done BOOL NOT NULL
+            );
+
             CREATE TABLE todo (
                 id INTEGER PRIMARY KEY, 
                 text TEXT NOT NULL, 
                 author_id INTEGER NOT NULL REFERENCES user(id),
-                editor_id INTEGER NOT NULL REFERENCES user(id)
+                editor_id INTEGER NOT NULL REFERENCES user(id),
+                views INTEGER NULL DEFAULT NULL,
+                status_id INTEGER NULL REFERENCES status(id),
+                file TEXT NOT NULL
             );
             ",
         )
@@ -72,7 +94,7 @@ fn from_row() {
 
     let todo_id: i32 = connection
         .prepare(
-            "INSERT INTO todo(text, author_id, editor_id) VALUES ('laundry', ?1, ?2) RETURNING id",
+            "INSERT INTO todo(text, author_id, editor_id, file) VALUES ('laundry', ?1, ?2, 'foo/bar.txt') RETURNING id",
         )
         .unwrap()
         .query_row(params![user_ids[0], user_ids[1]], |r| r.get(0))
@@ -84,6 +106,8 @@ fn from_row() {
             SELECT 
                 t.id, 
                 t.text, 
+                t.views,
+                t.file,
                 a.id as author_id, 
                 a.name as author_name,
                 ar.id as author_role_id,
@@ -91,7 +115,8 @@ fn from_row() {
                 e.id as editor_id,
                 e.name as editor_name,
                 er.id as editor_role_id,
-                er.kind as editor_role_kind
+                er.kind as editor_role_kind,
+                st.is_done as is_done
             FROM 
                 todo t 
             JOIN user a ON 
@@ -102,6 +127,8 @@ fn from_row() {
                 e.id = t.editor_id
             LEFT JOIN role er ON 
                 e.role_id = er.id
+            LEFT JOIN status st ON
+                t.status_id = st.id
             WHERE 
                 t.id = ?1",
             params![todo_id],
@@ -109,5 +136,9 @@ fn from_row() {
         )
         .unwrap();
 
-    println!("{:#?}", todo);
+    assert_eq!(todo.id, todo_id);
+    assert_eq!(todo.text, "laundry");
+    assert_eq!(todo.status, Status { is_done: false });
+    assert_eq!(todo.views, 0);
+    assert_eq!(todo.file.file_name(), Some(OsStr::new("bar.txt")));
 }
