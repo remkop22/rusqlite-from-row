@@ -29,7 +29,7 @@ pub trait FromRow: Sized {
     ///
     /// Panics if the row does not contain the expected column names.
     fn from_row_prefixed(row: &rusqlite::Row, prefix: Option<&str>) -> Self {
-        Self::try_from_row_prefixed(row, prefix).unwrap()
+        Self::try_from_row_prefixed(row, prefix).expect("from row failed")
     }
 
     /// Try's to perform the conversion. Each row will be extracted using it's name prefixed with

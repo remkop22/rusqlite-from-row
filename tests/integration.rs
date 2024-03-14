@@ -8,7 +8,7 @@ pub struct Todo {
     text: String,
     #[from_row(flatten, prefix = "author_")]
     author: User,
-    #[from_row(flatten, prefix = "editor_")]
+    #[from_row(flatten, prefix)]
     editor: User,
 }
 

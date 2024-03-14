@@ -31,6 +31,8 @@ This will delegate the creation of that field to `FromRow::from_row` with the sa
 
 Because tables might have naming collisions when joining them, you can specify a `prefix = ".."` to retrieve the columns uniquely. This prefix should match the prefix you specify when renaming the column in a select, like `select <column> as <prefix><column>`. Nested prefixing is supported.
 
+One can also use the `#[from_row(prefix)]` without a value. In this case the field name following a underscore will be used.
+
 Outer joins can be supported by wrapping the flattened type in an `Option`. The `FromRow` implementation of `Option` will still require all columns to present, but will produce a `None` if all the columns are an SQL `null` value.
 
 ```rust
@@ -43,6 +45,8 @@ struct Todo {
     text: String,
     #[from_row(flatten, prefix = "user_")]
     author: User
+    #[from_row(flatten, prefix)]
+    editor: User
 }
 
 #[derive(FromRow)]
@@ -51,8 +55,29 @@ struct User {
     name: String
 }
 
-// Rename all `User` fields to have `user_` prefix.
-let row = client.query_one("SELECT t.id, t.name, t.text, u.name as user_name, u.id as user_id FROM todos t JOIN user u ON t.author_id = u.user_id", [], Todo::try_from_row).unwrap();
+// Rename all `User` fields to have `user_` or `editor_` prefixes.
+let row = client
+    .query_one(
+        "
+    SELECT 
+        t.id, 
+        t.name, 
+        t.text, 
+        u.name as user_name, 
+        u.id as user_id,
+        e.name as editor_name,
+        e.id as editor_id
+    FROM 
+        todos t 
+    JOIN 
+        user u ON t.author_id = u.user_id
+    JOIN
+        user e ON t.editor_id = e.user_id
+        ",
+        [],
+        Todo::try_from_row,
+    )
+    .unwrap();
 ```
 
 ### Renaming and Converting

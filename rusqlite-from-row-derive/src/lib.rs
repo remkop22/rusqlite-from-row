@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 
-// use darling::{ast::Data, Error, FromDeriveInput, FromField, ToTokens};
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -182,18 +181,24 @@ impl FromRowField {
     }
 
     fn generate_is_all_null(&self) -> TokenStream2 {
-        let column_name = self.column_name();
         let target_ty = self.target_ty();
 
         if self.attrs.flatten {
-            let prefix = if let Some(prefix) = &self.attrs.prefix {
-                quote!(Some(&(prefix.unwrap_or("").to_string() + #prefix)))
-            } else {
-                quote!(prefix)
+            let prefix = match &self.attrs.prefix {
+                Some(Prefix::Value(prefix)) => {
+                    quote!(Some(&(prefix.unwrap_or("").to_string() + #prefix)))
+                }
+                Some(Prefix::Field) => {
+                    let ident_str = format!("{}_", self.ident);
+                    quote!(Some(&(prefix.unwrap_or("").to_string() + #ident_str)))
+                }
+                None => quote!(prefix),
             };
 
             quote!(<#target_ty as rusqlite_from_row::FromRow>::is_all_null(row, #prefix)?)
         } else {
+            let column_name = self.column_name();
+
             quote! {
                 rusqlite_from_row::rusqlite::Row::get_ref::<&str>(
                     row,
@@ -211,10 +216,15 @@ impl FromRowField {
         let target_ty = self.target_ty();
 
         let mut base = if self.attrs.flatten {
-            let prefix = if let Some(prefix) = &self.attrs.prefix {
-                quote!(Some(&(prefix.unwrap_or("").to_string() + #prefix)))
-            } else {
-                quote!(prefix)
+            let prefix = match &self.attrs.prefix {
+                Some(Prefix::Value(prefix)) => {
+                    quote!(Some(&(prefix.unwrap_or("").to_string() + #prefix)))
+                }
+                Some(Prefix::Field) => {
+                    let ident_str = format!("{}_", self.ident);
+                    quote!(Some(&(prefix.unwrap_or("").to_string() + #ident_str)))
+                }
+                None => quote!(prefix),
             };
 
             quote!(<#target_ty as rusqlite_from_row::FromRow>::try_from_row_prefixed(row, #prefix)?)
@@ -239,7 +249,7 @@ struct FromRowAttrs {
     flatten: bool,
     /// Can only be used in combination with flatten. Will prefix all fields of the nested struct
     /// with this string. Can be useful for joins with overlapping names.
-    prefix: Option<String>,
+    prefix: Option<Prefix>,
     /// Optionaly use this type as the target for `FromRow` or `FromSql`, and then
     /// call `TryFrom::try_from` to convert it the `self.ty`.
     try_from: Option<Type>,
@@ -249,6 +259,11 @@ struct FromRowAttrs {
     /// Override the name of the actual sql column instead of using `self.ident`.
     /// Is not compatible with `flatten` since no column is needed there.
     rename: Option<String>,
+}
+
+enum Prefix {
+    Value(String),
+    Field,
 }
 
 impl FromRowAttrs {
@@ -268,8 +283,13 @@ impl FromRowAttrs {
         if meta.path.is_ident("flatten") {
             self.flatten = true;
         } else if meta.path.is_ident("prefix") {
-            let prefix: LitStr = meta.value()?.parse()?;
-            self.prefix = Some(prefix.value());
+            let prefix = if let Ok(value) = meta.value() {
+                Prefix::Value(value.parse::<LitStr>()?.value())
+            } else {
+                Prefix::Field
+            };
+
+            self.prefix = Some(prefix);
         } else if meta.path.is_ident("try_from") {
             let try_from: LitStr = meta.value()?.parse()?;
             self.try_from = Some(parse_str(&try_from.value())?);
