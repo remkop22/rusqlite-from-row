@@ -70,9 +70,9 @@ let row = client
     FROM 
         todos t 
     JOIN 
-        user u ON t.author_id = u.user_id
+        user u ON t.author_id = u.id
     JOIN
-        user e ON t.editor_id = e.user_id
+        user e ON t.editor_id = e.id
         ",
         [],
         Todo::try_from_row,
@@ -89,6 +89,9 @@ Normally if you have a custom wrapper type like `struct DbId(i32)`, you'd need t
 This will delegate the sql conversion to `<i32 as FromSql>` and subsequently convert it to `DbId`.
 
 ```rust
+
+use rusqlite_from_row::FromRow;
+
 struct DbId(i32);
 
 impl From<i32> for DbId {
@@ -97,6 +100,7 @@ impl From<i32> for DbId {
     }
 }
 
+#[derive(FromRow)]
 struct Todo {
     // If the sqlite column is named `todo_id`.
     #[from_row(rename = "todo_id", from = "i32")]
