@@ -146,7 +146,7 @@ impl FromRowField {
 
     /// Returns the name that maps to the actuall sql column
     /// By default this is the same as the rust field name but can be overwritten by `#[from_row(rename = "..")]`.
-    fn column_name(&self) -> Cow<str> {
+    fn column_name(&self) -> Cow<'_, str> {
         match &self.attrs {
             FromRowAttrs::Field {
                 rename: Some(name), ..
